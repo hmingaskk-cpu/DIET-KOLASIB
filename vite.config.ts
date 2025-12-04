@@ -4,89 +4,91 @@ import react from "@vitejs/plugin-react-swc";
 import path from "path";
 import { VitePWA } from "vite-plugin-pwa";
 
-export default defineConfig(({ mode }) => ({
-  server: {
-    host: "::",
-    port: 8080,
-  },
-  plugins: [
-    dyadComponentTagger(),
-    react(),
+export default defineConfig(({ mode }) => {
+  return {
+    server: {
+      host: "::",
+      port: 8080,
+    },
 
-    // Enable PWA only in production
-    mode === "production" &&
-      VitePWA({
-        registerType: "autoUpdate",
-        injectRegister: null, // <--- VERY IMPORTANT
+    plugins: [
+      dyadComponentTagger(),
+      react(),
 
+      mode === "production" &&
+        VitePWA({
+          injectRegister: null,
+          registerType: "autoUpdate",
 
-        includeAssets: [
-          "favicon.ico",
-          "apple-touch-icon.png",
-          "masked-icon.svg",
-        ],
-
-        manifest: {
-          name: "DIET KOLASIB",
-          short_name: "DIET KOLASIB",
-          description: "Educational Management System for DIET Kolasib",
-          theme_color: "#1E40AF",
-          icons: [
-            {
-              src: "pwa-192x192.png",
-              sizes: "192x192",
-              type: "image/png",
-            },
-            {
-              src: "pwa-512x512.png",
-              sizes: "512x512",
-              type: "image/png",
-            },
-            {
-              src: "pwa-512x512.maskable.png",
-              sizes: "512x512",
-              type: "image/png",
-              purpose: "maskable",
-            },
+          includeAssets: [
+            "favicon.ico",
+            "apple-touch-icon.png",
+            "masked-icon.svg",
           ],
-        },
 
-        // 🔥 FIX: Do NOT precache index.html or JS bundles
-        workbox: {
-          cleanupOutdatedCaches: true,
-          skipWaiting: true,
-          clientsClaim: true,
+          manifest: {
+            name: "DIET KOLASIB",
+            short_name: "DIET KOLASIB",
+            description: "Educational Management System for DIET Kolasib",
+            theme_color: "#1E40AF",
+            display: "standalone",
+            icons: [
+              {
+                src: "pwa-192x192.png",
+                sizes: "192x192",
+                type: "image/png",
+              },
+              {
+                src: "pwa-512x512.png",
+                sizes: "512x512",
+                type: "image/png",
+              },
+              {
+                src: "pwa-512x512.maskable.png",
+                sizes: "512x512",
+                type: "image/png",
+                purpose: "maskable",
+              },
+            ],
+          },
 
-          // Ensure no precaching
-    globPatterns: [],
+          workbox: {
+            cleanupOutdatedCaches: true,
+            skipWaiting: true,
+            clientsClaim: true,
 
-    // Prevent Workbox from trying to route index.html
-    navigateFallback: undefined,
-    navigateFallbackAllowlist: [],
-    navigateFallbackDenylist: [/./],
+            globPatterns: [],
 
-          // Prevent caching Supabase requests (critical)
-          runtimeCaching: [
-            {
-              urlPattern: /^https:\/\/[a-z0-9-]+\.supabase\.co\/.*/i,
-              handler: "NetworkOnly",
-            },
+            // Fix: remove invalid denylist rule
+            navigateFallback: undefined,
+            navigateFallbackAllowlist: [/^\/$/],
+            navigateFallbackDenylist: [],
 
-            // For navigation: use Network-First so app always updates
-            {
-              urlPattern: ({ request }) => request.mode === "navigate",
-              handler: "NetworkFirst",
+            runtimeCaching: [
+              {
+                urlPattern: /^https:\/\/[a-z0-9-]+\.supabase\.co\/.*/i,
+                handler: "NetworkOnly",
+              },
+              {
+                urlPattern: ({ request }) => request.mode === "navigate",
+                handler: "NetworkFirst",
+                options: {
+                  cacheName: "html-cache",
+                  expiration: {
+                    maxEntries: 5,
+                    maxAgeSeconds: 60 * 60,
+                  },
                 },
               },
-            },
-          ],
-        },
-      }),
-  ].filter(Boolean),
+            ],
+          },
+        }),
+    ].filter(Boolean),
 
-  resolve: {
-    alias: {
-      "@": path.resolve(__dirname, "./src"),
+    resolve: {
+      alias: {
+        "@": path.resolve(__dirname, "./src"),
+      },
     },
-  },
-}));
+  };
+});
