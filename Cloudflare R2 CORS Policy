@@ -1,0 +1,16 @@
+[
+  {
+    "AllowedHeaders": ["*"],
+    "AllowedMethods": ["GET"],
+    "AllowedOrigins": ["*"],
+    "ExposeHeaders": [],
+    "MaxAgeSeconds": 3000
+  },
+  {
+    "AllowedHeaders": ["*"],
+    "AllowedMethods": ["PUT", "DELETE"],
+    "AllowedOrigins": ["http://localhost:32100", "https://dyad.sh"],
+    "ExposeHeaders": [],
+    "MaxAgeSeconds": 3000
+  }
+]
