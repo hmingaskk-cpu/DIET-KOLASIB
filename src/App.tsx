@@ -34,7 +34,6 @@ import AlumniDetail from "./pages/AlumniDetail";
 import { AuthProvider } from "./context/AuthContext";
 import ProtectedRoute from "./components/ProtectedRoute";
 import { useAuth } from "./context/AuthContext";
-import { clearAllAuthData, isTokenStale } from "./context/AuthContext";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -60,36 +59,31 @@ const initializeServiceWorker = () => {
 
 // Component to handle auth initialization and state management
 const AuthStateInitializer = () => {
-  const { user, loading } = useAuth();
+  const { user } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  const [appReady, setAppReady] = useState(false);
 
   useEffect(() => {
     // Initialize service worker
     initializeServiceWorker();
     
-    // Check for stale auth on mount
-    const staleAuthDetected = isTokenStale();
-    
-    // Only redirect if we're not already on login page
-    if (staleAuthDetected && location.pathname !== '/login' && location.pathname !== '/forgot-password') {
-      console.log('Stale auth detected, clearing and redirecting to login');
-      clearAllAuthData();
-      navigate('/login', { 
-        replace: true,
-        state: { from: location.pathname, sessionExpired: true }
-      });
+    // Check for service worker conflicts on login page
+    if (location.pathname === '/login' || location.pathname === '/forgot-password') {
+      // Clear any stale service worker state on auth pages
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.getRegistration().then(registration => {
+          if (registration) {
+            // Send message to service worker to clear auth-related caches
+            registration.active?.postMessage({ type: 'CLEAR_AUTH_CACHE' });
+          }
+        });
+      }
     }
-    
-    // Mark app as ready after checks
-    setTimeout(() => {
-      setAppReady(true);
-    }, 100);
     
     // Set up beforeunload handler to save auth state
     const handleBeforeUnload = () => {
       if (user) {
+        // Only update last_auth_time if we have a valid user
         localStorage.setItem('last_auth_time', Date.now().toString());
       }
     };
@@ -108,26 +102,56 @@ const AuthStateInitializer = () => {
     }
   }, [user]);
 
-  // Prevent rendering until auth checks are done
-  if (!appReady) {
-    return null;
-  }
-
   return null;
 };
 
 const AppRoutes = () => {
   const { user, loading } = useAuth();
   const [authInitialized, setAuthInitialized] = useState(false);
+  const [showResetButton, setShowResetButton] = useState(false);
 
   useEffect(() => {
     // Set a timeout to prevent infinite loading
     const timer = setTimeout(() => {
       setAuthInitialized(true);
-    }, 5000); // 5 seconds max for auth initialization
+      // Show reset button after 3 seconds of loading
+      if (loading) {
+        setShowResetButton(true);
+      }
+    }, 3000); // 3 seconds max for auth initialization
 
     return () => clearTimeout(timer);
-  }, []);
+  }, [loading]);
+
+  // Function to clear all auth data
+  const clearAllAuthData = () => {
+    // Clear localStorage
+    localStorage.removeItem('auth_token');
+    localStorage.removeItem('last_auth_time');
+    localStorage.removeItem('user_role');
+    localStorage.removeItem('user_email');
+    localStorage.removeItem('sb-uyhlvjkcagzihzngttei-auth-token'); // Supabase specific token
+    
+    // Clear sessionStorage
+    sessionStorage.clear();
+    
+    // Clear cookies
+    document.cookie.split(";").forEach(function(c) {
+      document.cookie = c.replace(/^ +/, "").replace(/=.*/, "=;expires=" + new Date().toUTCString() + ";path=/");
+    });
+    
+    // Dispatch logout event for service worker
+    window.dispatchEvent(new Event('logout'));
+    
+    // Clear service worker caches if available
+    if ('caches' in window) {
+      caches.keys().then(cacheNames => {
+        cacheNames.forEach(cacheName => {
+          caches.delete(cacheName);
+        });
+      });
+    }
+  };
 
   // Show loading state
   if (loading || !authInitialized) {
@@ -135,15 +159,19 @@ const AppRoutes = () => {
       <div className="flex flex-col items-center justify-center min-h-screen bg-background">
         <div className="w-16 h-16 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
         <p className="mt-4 text-lg text-muted-foreground">Loading application...</p>
-        <button
-          onClick={() => {
-            clearAllAuthData();
-            window.location.href = '/login';
-          }}
-          className="mt-4 px-4 py-2 text-sm text-red-600 hover:text-red-800 border border-red-300 rounded-md hover:bg-red-50 transition-colors"
-        >
-          Reset App State
-        </button>
+        
+        {showResetButton && (
+          <button
+            onClick={() => {
+              clearAllAuthData();
+              // Force a hard reload to clear service worker
+              window.location.href = '/login';
+            }}
+            className="mt-4 px-4 py-2 text-sm text-red-600 hover:text-red-800 border border-red-300 rounded-md hover:bg-red-50 transition-colors"
+          >
+            Reset App State
+          </button>
+        )}
       </div>
     );
   }
@@ -213,19 +241,35 @@ const AppRoutes = () => {
   );
 };
 
-const App = () => (
-  <QueryClientProvider client={queryClient}>
-    <ThemeProvider defaultTheme="system" storageKey="vite-ui-theme">
-      <TooltipProvider>
-        <Sonner />
-        <BrowserRouter>
-          <AuthProvider>
-            <AppRoutes />
-          </AuthProvider>
-        </BrowserRouter>
-      </TooltipProvider>
-    </ThemeProvider>
-  </QueryClientProvider>
-);
+const App = () => {
+  // Listen for logout events from AuthContext
+  useEffect(() => {
+    const handleLogoutEvent = () => {
+      // Clear any pending states
+      localStorage.removeItem('last_auth_time');
+    };
+
+    window.addEventListener('logout', handleLogoutEvent);
+    
+    return () => {
+      window.removeEventListener('logout', handleLogoutEvent);
+    };
+  }, []);
+
+  return (
+    <QueryClientProvider client={queryClient}>
+      <ThemeProvider defaultTheme="system" storageKey="vite-ui-theme">
+        <TooltipProvider>
+          <Sonner />
+          <BrowserRouter>
+            <AuthProvider>
+              <AppRoutes />
+            </AuthProvider>
+          </BrowserRouter>
+        </TooltipProvider>
+      </ThemeProvider>
+    </QueryClientProvider>
+  );
+};
 
 export default App;
