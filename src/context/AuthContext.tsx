@@ -25,7 +25,7 @@ interface AuthContextType {
   user: UserWithRole | null;
   session: Session | null;
   loading: boolean;
-  signIn: (email: string, password: string) => Promise<void>;
+  signIn: (email: string, password: string, rememberMe?: boolean) => Promise<void>;
   signOut: () => Promise<void>;
   refreshUser: () => Promise<void>;
 }
@@ -184,10 +184,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     };
   }, [getUserWithRole]);
 
-  const signIn = async (email: string, password: string) => {
+  const signIn = async (email: string, password: string, rememberMe?: boolean) => {
     setLoading(true);
     try {
-      console.log("Signing in...", email);
+      console.log("Signing in...", email, "rememberMe:", rememberMe);
       
       const { data, error } = await supabase.auth.signInWithPassword({
         email,
