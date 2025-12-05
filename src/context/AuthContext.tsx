@@ -33,7 +33,7 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 // Helper function to clear all auth data consistently
-const clearAllAuthData = () => {
+export const clearAllAuthData = () => {
   // Clear localStorage
   localStorage.removeItem('auth_token');
   localStorage.removeItem('last_auth_time');
@@ -52,11 +52,20 @@ const clearAllAuthData = () => {
   // Dispatch logout event for service worker
   window.dispatchEvent(new Event('logout'));
   
+  // Clear service worker caches if available
+  if ('caches' in window) {
+    caches.keys().then(cacheNames => {
+      cacheNames.forEach(cacheName => {
+        caches.delete(cacheName);
+      });
+    });
+  }
+  
   console.log('All auth data cleared');
 };
 
 // Helper to check if token is stale/expired
-const isTokenStale = (): boolean => {
+export const isTokenStale = (): boolean => {
   const lastAuthTime = localStorage.getItem('last_auth_time');
   const now = Date.now();
   
@@ -304,7 +313,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const signOut = async () => {
     setLoading(true);
     try {
-      // Clear auth data first
+      // Dispatch logout event for service worker cleanup
+      window.dispatchEvent(new Event('logout'));
+      
+      // Clear all auth data
       clearAllAuthData();
       
       // Then sign out from Supabase
