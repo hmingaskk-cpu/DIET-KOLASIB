@@ -59,28 +59,78 @@ export default defineConfig(({ mode }) => {
 
             globPatterns: [],
 
-            // Fix: remove invalid denylist rule
-            navigateFallback: undefined,
-            navigateFallbackAllowlist: [/^\/$/],
-            navigateFallbackDenylist: [],
+            // Fix: Don't cache HTML for authenticated apps
+            navigateFallback: null,
+            navigateFallbackAllowlist: [],
+            navigateFallbackDenylist: [/^\/.*/], // Deny all - don't cache any HTML
 
             runtimeCaching: [
+              // For authentication endpoints, use NetworkFirst with short cache
               {
-                urlPattern: /^https:\/\/[a-z0-9-]+\.supabase\.co\/.*/i,
-                handler: "NetworkOnly",
-              },
-              {
-                urlPattern: ({ request }) => request.mode === "navigate",
+                urlPattern: /^https:\/\/[a-z0-9-]+\.supabase\.co\/auth\/.*/i,
                 handler: "NetworkFirst",
                 options: {
-                  cacheName: "html-cache",
+                  cacheName: "supabase-auth-cache",
                   expiration: {
-                    maxEntries: 5,
-                    maxAgeSeconds: 60 * 60,
+                    maxEntries: 1,
+                    maxAgeSeconds: 300, // 5 minutes max for auth data
+                  },
+                  networkTimeoutSeconds: 10,
+                },
+              },
+              // For other Supabase API calls, use NetworkFirst for data consistency
+              {
+                urlPattern: /^https:\/\/[a-z0-9-]+\.supabase\.co\/.*/i,
+                handler: "NetworkFirst",
+                options: {
+                  cacheName: "supabase-api-cache",
+                  expiration: {
+                    maxEntries: 100,
+                    maxAgeSeconds: 5 * 60, // 5 minutes for API data
+                  },
+                  networkTimeoutSeconds: 5,
+                },
+              },
+              // For navigation requests (HTML pages), use NetworkOnly to avoid caching auth state
+              {
+                urlPattern: ({ request }) => request.mode === "navigate",
+                handler: "NetworkOnly",
+                options: {
+                  networkTimeoutSeconds: 5,
+                },
+              },
+              // Cache static assets with CacheFirst strategy
+              {
+                urlPattern: /\.(?:js|css|woff2|woff|ttf|eot|ico|svg|png|jpg|jpeg|gif)$/,
+                handler: "CacheFirst",
+                options: {
+                  cacheName: "static-assets",
+                  expiration: {
+                    maxEntries: 100,
+                    maxAgeSeconds: 30 * 24 * 60 * 60, // 30 days
+                  },
+                },
+              },
+              // Cache fonts
+              {
+                urlPattern: /^https:\/\/fonts\.(?:googleapis|gstatic)\.com\/.*/i,
+                handler: "CacheFirst",
+                options: {
+                  cacheName: "google-fonts",
+                  expiration: {
+                    maxEntries: 10,
+                    maxAgeSeconds: 60 * 60 * 24 * 365, // 1 year
                   },
                 },
               },
             ],
+          },
+
+          // Additional PWA configuration to handle auth state
+          devOptions: {
+            enabled: mode === "development",
+            type: "module",
+            navigateFallback: "index.html",
           },
         }),
     ].filter(Boolean),
@@ -88,6 +138,18 @@ export default defineConfig(({ mode }) => {
     resolve: {
       alias: {
         "@": path.resolve(__dirname, "./src"),
+      },
+    },
+
+    // Clear build cache to avoid stale service worker issues
+    build: {
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            vendor: ["react", "react-dom", "react-router-dom"],
+            auth: ["@supabase/supabase-js"],
+          },
+        },
       },
     },
   };
