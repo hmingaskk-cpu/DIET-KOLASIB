@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
+import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { ThemeProvider } from "@/components/theme-provider";
 import AdminDashboard from "./pages/AdminDashboard";
 import NotFound from "./pages/NotFound";
@@ -38,87 +38,17 @@ import { useAuth } from "./context/AuthContext";
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      staleTime: 2 * 60 * 1000, // 2 minutes
-      gcTime: 5 * 60 * 1000, // 5 minutes
+      staleTime: 2 * 60 * 1000,
+      gcTime: 5 * 60 * 1000,
       retry: 1,
     },
   },
 });
 
-// Simple function to clear all app data
-const clearAllAppData = () => {
-  console.log("Clearing all app data...");
-  
-  // Clear localStorage
-  localStorage.clear();
-  
-  // Clear sessionStorage
-  sessionStorage.clear();
-  
-  // Clear all cookies
-  document.cookie.split(";").forEach(function(c) {
-    document.cookie = c.replace(/^ +/, "").replace(/=.*/, "=;expires=" + new Date().toUTCString() + ";path=/;domain=" + window.location.hostname);
-  });
-  
-  // Clear IndexedDB if needed
-  if (window.indexedDB) {
-    window.indexedDB.databases().then((databases) => {
-      databases.forEach((db) => {
-        if (db.name) {
-          window.indexedDB.deleteDatabase(db.name);
-        }
-      });
-    });
-  }
-  
-  // Clear service worker caches
-  if ('caches' in window) {
-    caches.keys().then(cacheNames => {
-      cacheNames.forEach(cacheName => {
-        caches.delete(cacheName);
-      });
-    });
-  }
-  
-  // Unregister all service workers
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.getRegistrations().then(registrations => {
-      registrations.forEach(registration => {
-        registration.unregister();
-      });
-    });
-  }
-  
-  // Force a hard reload
-  window.location.href = '/login';
-};
-
-// Component to handle service worker cleanup on auth pages
-const ServiceWorkerCleanup = () => {
-  const location = useLocation();
-  
-  useEffect(() => {
-    // Only run on auth pages
-    if (location.pathname === '/login' || location.pathname === '/forgot-password') {
-      // Unregister any service workers on auth pages
-      if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.getRegistrations().then(registrations => {
-          registrations.forEach(registration => {
-            registration.unregister();
-          });
-        });
-      }
-    }
-  }, [location.pathname]);
-  
-  return null;
-};
-
 const AppRoutes = () => {
   const { user, loading } = useAuth();
   const [showResetButton, setShowResetButton] = useState(false);
-  
-  // Show reset button after 2 seconds of loading
+
   useEffect(() => {
     const timer = setTimeout(() => {
       setShowResetButton(true);
@@ -135,17 +65,17 @@ const AppRoutes = () => {
         <p className="mt-4 text-lg text-muted-foreground">Loading application...</p>
         
         {showResetButton && (
-          <div className="mt-6 space-y-2">
-            <button
-              onClick={clearAllAppData}
-              className="px-4 py-2 text-sm bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors"
-            >
-              Reset App State
-            </button>
-            <p className="text-xs text-muted-foreground text-center">
-              If the app is stuck, click above to reset
-            </p>
-          </div>
+          <button
+            onClick={() => {
+              // Clear everything
+              localStorage.clear();
+              sessionStorage.clear();
+              window.location.href = '/login';
+            }}
+            className="mt-4 px-4 py-2 text-sm bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors"
+          >
+            Reset App State
+          </button>
         )}
       </div>
     );
@@ -153,7 +83,7 @@ const AppRoutes = () => {
 
   const DashboardSelector = () => {
     if (!user) {
-      return null; // Will be handled by ProtectedRoute
+      return null;
     }
 
     switch (user.role) {
@@ -171,63 +101,44 @@ const AppRoutes = () => {
   };
 
   return (
-    <>
-      <ServiceWorkerCleanup />
-      <Routes>
-        <Route path="/login" element={<Login />} />
-        <Route path="/forgot-password" element={<ForgotPassword />} />
-        <Route path="/update-password" element={<ResetPasswordPage />} />
-        <Route path="/unauthorized" element={<Unauthorized />} />
+    <Routes>
+      <Route path="/login" element={<Login />} />
+      <Route path="/forgot-password" element={<ForgotPassword />} />
+      <Route path="/update-password" element={<ResetPasswordPage />} />
+      <Route path="/unauthorized" element={<Unauthorized />} />
+      
+      <Route element={<DashboardLayout />}>
+        <Route path="/" element={
+          <ProtectedRoute requiredRoles={["admin", "faculty", "staff", "student"]}>
+            <DashboardSelector />
+          </ProtectedRoute>
+        } />
         
-        <Route element={<DashboardLayout />}>
-          <Route path="/" element={
-            <ProtectedRoute requiredRoles={["admin", "faculty", "staff", "student"]}>
-              <DashboardSelector />
-            </ProtectedRoute>
-          } />
-          
-          {/* All other routes remain the same */}
-          <Route path="/about" element={<ProtectedRoute requiredRoles={["admin", "faculty", "staff", "student"]}><About /></ProtectedRoute>} />
-          <Route path="/contact" element={<ProtectedRoute requiredRoles={["admin", "faculty", "staff", "student"]}><Contact /></ProtectedRoute>} />
-          <Route path="/courses" element={<ProtectedRoute requiredRoles={["admin", "faculty", "staff"]}><Courses /></ProtectedRoute>} />
-          <Route path="/students" element={<ProtectedRoute requiredRoles={["admin", "faculty", "staff"]}><Students /></ProtectedRoute>} />
-          <Route path="/students/:id" element={<ProtectedRoute requiredRoles={["admin", "faculty", "staff", "student"]}><StudentDetail /></ProtectedRoute>} />
-          <Route path="/faculty" element={<ProtectedRoute requiredRoles={["admin", "staff"]}><FacultyPage /></ProtectedRoute>} />
-          <Route path="/faculty/:id" element={<ProtectedRoute requiredRoles={["admin", "faculty", "staff"]}><FacultyDetail /></ProtectedRoute>} />
-          <Route path="/attendance" element={<ProtectedRoute requiredRoles={["admin", "faculty", "staff"]}><Attendance /></ProtectedRoute>} />
-          <Route path="/attendance-reports" element={<ProtectedRoute requiredRoles={["admin", "faculty", "staff"]}><AttendanceReports /></ProtectedRoute>} />
-          <Route path="/resources" element={<ProtectedRoute requiredRoles={["admin", "faculty", "staff", "student"]}><Resources /></ProtectedRoute>} />
-          <Route path="/alumni" element={<ProtectedRoute requiredRoles={["admin", "staff"]}><AlumniPage /></ProtectedRoute>} />
-          <Route path="/alumni/:id" element={<ProtectedRoute requiredRoles={["admin", "staff", "faculty", "student"]}><AlumniDetail /></ProtectedRoute>} />
-          <Route path="/calendar" element={<ProtectedRoute requiredRoles={["admin", "faculty", "staff", "student"]}><Calendar /></ProtectedRoute>} />
-          <Route path="/settings" element={<ProtectedRoute requiredRoles={["admin", "faculty", "staff", "student"]}><Settings /></ProtectedRoute>} />
-          <Route path="/reports" element={<ProtectedRoute requiredRoles={["admin", "faculty", "staff"]}><Reports /></ProtectedRoute>} />
-          <Route path="/user-management" element={<ProtectedRoute requiredRoles={["admin"]}><UserManagement /></ProtectedRoute>} />
-          <Route path="/profile" element={<ProtectedRoute requiredRoles={["admin", "faculty", "staff", "student"]}><Profile /></ProtectedRoute>} />
-        </Route>
+        <Route path="/about" element={<ProtectedRoute requiredRoles={["admin", "faculty", "staff", "student"]}><About /></ProtectedRoute>} />
+        <Route path="/contact" element={<ProtectedRoute requiredRoles={["admin", "faculty", "staff", "student"]}><Contact /></ProtectedRoute>} />
+        <Route path="/courses" element={<ProtectedRoute requiredRoles={["admin", "faculty", "staff"]}><Courses /></ProtectedRoute>} />
+        <Route path="/students" element={<ProtectedRoute requiredRoles={["admin", "faculty", "staff"]}><Students /></ProtectedRoute>} />
+        <Route path="/students/:id" element={<ProtectedRoute requiredRoles={["admin", "faculty", "staff", "student"]}><StudentDetail /></ProtectedRoute>} />
+        <Route path="/faculty" element={<ProtectedRoute requiredRoles={["admin", "staff"]}><FacultyPage /></ProtectedRoute>} />
+        <Route path="/faculty/:id" element={<ProtectedRoute requiredRoles={["admin", "faculty", "staff"]}><FacultyDetail /></ProtectedRoute>} />
+        <Route path="/attendance" element={<ProtectedRoute requiredRoles={["admin", "faculty", "staff"]}><Attendance /></ProtectedRoute>} />
+        <Route path="/attendance-reports" element={<ProtectedRoute requiredRoles={["admin", "faculty", "staff"]}><AttendanceReports /></ProtectedRoute>} />
+        <Route path="/resources" element={<ProtectedRoute requiredRoles={["admin", "faculty", "staff", "student"]}><Resources /></ProtectedRoute>} />
+        <Route path="/alumni" element={<ProtectedRoute requiredRoles={["admin", "staff"]}><AlumniPage /></ProtectedRoute>} />
+        <Route path="/alumni/:id" element={<ProtectedRoute requiredRoles={["admin", "staff", "faculty", "student"]}><AlumniDetail /></ProtectedRoute>} />
+        <Route path="/calendar" element={<ProtectedRoute requiredRoles={["admin", "faculty", "staff", "student"]}><Calendar /></ProtectedRoute>} />
+        <Route path="/settings" element={<ProtectedRoute requiredRoles={["admin", "faculty", "staff", "student"]}><Settings /></ProtectedRoute>} />
+        <Route path="/reports" element={<ProtectedRoute requiredRoles={["admin", "faculty", "staff"]}><Reports /></ProtectedRoute>} />
+        <Route path="/user-management" element={<ProtectedRoute requiredRoles={["admin"]}><UserManagement /></ProtectedRoute>} />
+        <Route path="/profile" element={<ProtectedRoute requiredRoles={["admin", "faculty", "staff", "student"]}><Profile /></ProtectedRoute>} />
+      </Route>
 
-        <Route path="*" element={<NotFound />} />
-      </Routes>
-    </>
+      <Route path="*" element={<NotFound />} />
+    </Routes>
   );
 };
 
 const App = () => {
-  // Clear any residual auth state on app start
-  useEffect(() => {
-    // Check if we're coming from a successful login redirect
-    const urlParams = new URLSearchParams(window.location.search);
-    const fromLogin = urlParams.get('fromLogin');
-    
-    if (fromLogin === 'true') {
-      // Clear the URL parameter
-      window.history.replaceState({}, '', window.location.pathname);
-    }
-    
-    // Add a global reset function for debugging
-    (window as any).resetApp = clearAllAppData;
-  }, []);
-
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider defaultTheme="system" storageKey="vite-ui-theme">
