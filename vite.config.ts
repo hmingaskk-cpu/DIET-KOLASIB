@@ -17,8 +17,9 @@ export default defineConfig(({ mode }) => {
 
       mode === "production" &&
         VitePWA({
-          injectRegister: null,
-          registerType: "autoUpdate",
+          // Disable auto registration for now to debug auth issues
+          injectRegister: false,
+          registerType: "prompt",
 
           includeAssets: [
             "favicon.ico",
@@ -56,111 +57,64 @@ export default defineConfig(({ mode }) => {
             cleanupOutdatedCaches: true,
             skipWaiting: true,
             clientsClaim: true,
-
-            globPatterns: [],
-
-            // Fix: Don't cache HTML for authenticated apps
+            
+            // Don't cache HTML pages at all
+            globPatterns: [
+              '**/*.{js,css,html,ico,png,svg,jpg,jpeg,gif,webp,woff,woff2,ttf,eot,json}'
+            ],
+            
+            // Important: Don't cache navigation requests
             navigateFallback: null,
-            navigateFallbackAllowlist: [],
-            navigateFallbackDenylist: [/^\/.*/], // Deny all - don't cache any HTML
-
+            
             runtimeCaching: [
-              // For authentication endpoints, use NetworkFirst with short cache
+              // Critical: Don't cache any Supabase API calls for authentication
               {
                 urlPattern: /^https:\/\/[a-z0-9-]+\.supabase\.co\/auth\/.*/i,
-                handler: "NetworkFirst",
-                options: {
-                  cacheName: "supabase-auth-cache",
-                  expiration: {
-                    maxEntries: 1,
-                    maxAgeSeconds: 300, // 5 minutes max for auth data
-                  },
-                  networkTimeoutSeconds: 10,
-                },
+                handler: "NetworkOnly",
               },
-              // For other Supabase API calls, use NetworkFirst for data consistency
+              // Don't cache any Supabase REST API calls
               {
-                urlPattern: /^https:\/\/[a-z0-9-]+\.supabase\.co\/.*/i,
-                handler: "NetworkFirst",
-                options: {
-                  cacheName: "supabase-api-cache",
-                  expiration: {
-                    maxEntries: 100,
-                    maxAgeSeconds: 5 * 60, // 5 minutes for API data
-                  },
-                  networkTimeoutSeconds: 5,
-                },
+                urlPattern: /^https:\/\/[a-z0-9-]+\.supabase\.co\/rest\/.*/i,
+                handler: "NetworkOnly",
               },
-              // For navigation requests (HTML pages), use NetworkOnly to avoid caching auth state
-              // NetworkOnly doesn't support networkTimeoutSeconds, so we handle timeout differently
+              // Don't cache Supabase realtime
+              {
+                urlPattern: /^https:\/\/[a-z0-9-]+\.supabase\.co\/realtime\/.*/i,
+                handler: "NetworkOnly",
+              },
+              // For navigation requests, always use network only
               {
                 urlPattern: ({ request }) => request.mode === "navigate",
                 handler: "NetworkOnly",
-                // Remove options object since NetworkOnly doesn't support networkTimeoutSeconds
               },
-              // Cache static assets with CacheFirst strategy
+              // Cache static assets
               {
-                urlPattern: /\.(?:js|css|woff2|woff|ttf|eot|ico|svg|png|jpg|jpeg|gif)$/,
+                urlPattern: /\.(?:js|css|woff2|woff|ttf|eot|ico|svg|png|jpg|jpeg|gif|webp)$/,
                 handler: "CacheFirst",
                 options: {
                   cacheName: "static-assets",
                   expiration: {
                     maxEntries: 100,
-                    maxAgeSeconds: 30 * 24 * 60 * 60, // 30 days
-                  },
-                },
-              },
-              // Cache fonts
-              {
-                urlPattern: /^https:\/\/fonts\.(?:googleapis|gstatic)\.com\/.*/i,
-                handler: "CacheFirst",
-                options: {
-                  cacheName: "google-fonts",
-                  expiration: {
-                    maxEntries: 10,
-                    maxAgeSeconds: 60 * 60 * 24 * 365, // 1 year
-                  },
-                },
-              },
-              // Handle images with CacheFirst
-              {
-                urlPattern: /\.(?:png|jpg|jpeg|svg|gif|webp)$/,
-                handler: "CacheFirst",
-                options: {
-                  cacheName: "images",
-                  expiration: {
-                    maxEntries: 200,
-                    maxAgeSeconds: 30 * 24 * 60 * 60, // 30 days
+                    maxAgeSeconds: 30 * 24 * 60 * 60,
                   },
                 },
               },
             ],
           },
 
-          // Additional PWA configuration to handle auth state
+          // Disable in development to avoid service worker issues
           devOptions: {
-            enabled: mode === "development",
-            type: "module",
-            navigateFallback: "index.html",
+            enabled: false,
           },
+          
+          // Disable automatic registration
+          selfDestroying: true,
         }),
     ].filter(Boolean),
 
     resolve: {
       alias: {
         "@": path.resolve(__dirname, "./src"),
-      },
-    },
-
-    // Clear build cache to avoid stale service worker issues
-    build: {
-      rollupOptions: {
-        output: {
-          manualChunks: {
-            vendor: ["react", "react-dom", "react-router-dom"],
-            auth: ["@supabase/supabase-js"],
-          },
-        },
       },
     },
   };
