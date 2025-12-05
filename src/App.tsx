@@ -45,60 +45,32 @@ const queryClient = new QueryClient({
   },
 });
 
-// Function to completely clean everything
-const fullCleanup = () => {
-  console.log("Performing full cleanup...");
-  
-  // Clear all storage
-  localStorage.clear();
-  sessionStorage.clear();
-  
-  // Clear cookies
-  document.cookie.split(";").forEach(function(c) {
-    document.cookie = c.replace(/^ +/, "").replace(/=.*/, "=;expires=" + new Date().toUTCString() + ";path=/");
-  });
-  
-  // Clear service workers
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.getRegistrations().then(registrations => {
-      registrations.forEach(registration => {
-        registration.unregister();
-      });
-    });
-  }
-  
-  // Clear caches
-  if ('caches' in window) {
-    caches.keys().then(cacheNames => {
-      cacheNames.forEach(cacheName => {
-        caches.delete(cacheName);
-      });
-    });
-  }
-  
-  console.log("Cleanup complete!");
-  window.location.href = '/login?clean=1';
-};
-
 const AppRoutes = () => {
-  const { user, loading } = useAuth();
+  const { user, loading, forceClearStaleSession } = useAuth();
   const navigate = useNavigate();
   const [showReset, setShowReset] = useState(false);
+  const [autoCleared, setAutoCleared] = useState(false);
 
-  // Auto-redirect if not logged in
+  // Auto-clear stale session after 3 seconds if still loading
   useEffect(() => {
-    if (!loading && !user && window.location.pathname === '/') {
-      navigate('/login');
-    }
-  }, [user, loading, navigate]);
+    const timer = setTimeout(() => {
+      if (loading && !user && !autoCleared) {
+        console.log("Auto-clearing potentially stale session...");
+        setAutoCleared(true);
+        forceClearStaleSession();
+      }
+    }, 3000);
+    
+    return () => clearTimeout(timer);
+  }, [loading, user, autoCleared, forceClearStaleSession]);
 
-  // Show reset button after 3 seconds
+  // Show reset button after 5 seconds as fallback
   useEffect(() => {
     const timer = setTimeout(() => {
       if (loading) {
         setShowReset(true);
       }
-    }, 3000);
+    }, 5000);
     
     return () => clearTimeout(timer);
   }, [loading]);
@@ -108,14 +80,20 @@ const AppRoutes = () => {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-background">
         <div className="w-16 h-16 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
-        <p className="mt-4 text-lg text-muted-foreground">Loading application...</p>
+        <p className="mt-4 text-lg text-muted-foreground">
+          {autoCleared ? "Clearing stale session..." : "Loading application..."}
+        </p>
         
         {showReset && (
           <button
-            onClick={fullCleanup}
+            onClick={() => {
+              localStorage.clear();
+              sessionStorage.clear();
+              window.location.href = '/login';
+            }}
             className="mt-4 px-4 py-2 text-sm bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors"
           >
-            Reset App State
+            Force Reset App
           </button>
         )}
       </div>
@@ -180,23 +158,23 @@ const AppRoutes = () => {
 };
 
 const App = () => {
-  // Cleanup service workers on app start
+  // Clear any existing service workers on app start
   useEffect(() => {
-    console.log("App starting - cleaning up service workers");
-    
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.getRegistrations().then(registrations => {
         registrations.forEach(registration => {
           registration.unregister();
-          console.log('Service worker unregistered');
         });
       });
     }
     
-    // Check URL for clean parameter
-    const urlParams = new URLSearchParams(window.location.search);
-    if (urlParams.get('clean') === '1') {
-      window.history.replaceState({}, '', window.location.pathname);
+    // Clear caches
+    if ('caches' in window) {
+      caches.keys().then(cacheNames => {
+        cacheNames.forEach(cacheName => {
+          caches.delete(cacheName);
+        });
+      });
     }
   }, []);
 
