@@ -36,24 +36,36 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [user, setUser] = useState<UserWithRole | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
-  const [initialized, setInitialized] = useState(false);
+  const [authInitialized, setAuthInitialized] = useState(false);
 
-  // Clear Supabase storage
-  const clearAuthStorage = () => {
-    // Clear specific Supabase localStorage items
+  // Clear all Supabase storage
+  const clearSupabaseStorage = () => {
+    console.log("Clearing Supabase storage...");
+    
+    // Clear all localStorage items
     Object.keys(localStorage).forEach(key => {
-      if (key.includes('supabase') || key.includes('sb-')) {
+      if (key.includes('supabase') || key.includes('sb-') || key.includes('auth')) {
         localStorage.removeItem(key);
       }
     });
     
     // Clear sessionStorage
     sessionStorage.clear();
+    
+    // Clear any Supabase-related cookies
+    document.cookie.split(";").forEach(function(c) {
+      const cookieName = c.split("=")[0].trim();
+      if (cookieName.includes('supabase') || cookieName.includes('sb-')) {
+        document.cookie = cookieName + "=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/";
+      }
+    });
   };
 
   // Get user with role details
   const getUserWithRole = useCallback(async (baseUser: User): Promise<UserWithRole | null> => {
     try {
+      console.log("Fetching user profile for:", baseUser.id);
+      
       const { data: profile, error: profileError } = await supabase
         .from('profiles')
         .select('role, name, avatar_url, cloudinary_public_id')
@@ -65,8 +77,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         return null;
       }
 
-      let role = profile?.role || 'student';
-      let userWithRole: UserWithRole = { 
+      const role = profile?.role || 'student';
+      const userWithRole: UserWithRole = { 
         ...baseUser, 
         role, 
         name: profile?.name || baseUser.email,
@@ -74,14 +86,20 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         cloudinary_public_id: profile?.cloudinary_public_id
       };
 
-      // Fetch additional role details
+      console.log("Base user role:", role);
+
+      // Fetch additional role details if needed
       try {
         if (role === "student") {
           const { data } = await supabase.from('students').select('*').eq('user_id', baseUser.id).maybeSingle();
-          if (data) userWithRole = { ...userWithRole, ...data };
+          if (data) {
+            Object.assign(userWithRole, data);
+          }
         } else if (role === "faculty") {
           const { data } = await supabase.from('faculty').select('*').eq('user_id', baseUser.id).maybeSingle();
-          if (data) userWithRole = { ...userWithRole, ...data };
+          if (data) {
+            Object.assign(userWithRole, data);
+          }
         }
       } catch (err) {
         console.error('Role details fetch error:', err);
@@ -94,81 +112,99 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }
   }, []);
 
-  // Initialize auth
+  // Initialize auth - SIMPLE AND RELIABLE
   useEffect(() => {
     let mounted = true;
+    let initialized = false;
 
     const initializeAuth = async () => {
-      try {
-        setLoading(true);
-        
-        // First check for existing session
-        const { data: { session: localSession }, error: sessionError } = await supabase.auth.getSession();
+      if (initialized) return;
+      initialized = true;
 
-        if (sessionError || !localSession) {
+      try {
+        console.log("Starting auth initialization...");
+        
+        // First, check for existing session
+        const { data: { session: currentSession }, error: sessionError } = await supabase.auth.getSession();
+
+        if (sessionError) {
+          console.error("Session error:", sessionError);
+          clearSupabaseStorage();
+          if (mounted) {
+            setUser(null);
+            setSession(null);
+            setLoading(false);
+            setAuthInitialized(true);
+          }
+          return;
+        }
+
+        console.log("Current session found:", !!currentSession);
+
+        if (!currentSession) {
           // No session found
           if (mounted) {
             setUser(null);
             setSession(null);
             setLoading(false);
-            setInitialized(true);
+            setAuthInitialized(true);
           }
           return;
         }
 
-        // Verify the session is still valid
-        const { data: { user: validUser }, error: verifyError } = await supabase.auth.getUser();
+        // Verify session is still valid
+        const { data: { user: currentUser }, error: userError } = await supabase.auth.getUser();
 
-        if (verifyError || !validUser) {
-          clearAuthStorage();
+        if (userError || !currentUser) {
+          console.error("User validation error:", userError);
+          clearSupabaseStorage();
           if (mounted) {
             setUser(null);
             setSession(null);
             setLoading(false);
-            setInitialized(true);
+            setAuthInitialized(true);
           }
           return;
         }
 
-        // Session is valid, get user details
+        console.log("User validated, fetching details...");
+
+        // Get user details
+        const detailedUser = await getUserWithRole(currentUser);
+        
+        if (!detailedUser) {
+          console.error("Failed to get user details");
+          clearSupabaseStorage();
+        }
+
         if (mounted) {
-          setSession(localSession);
-          const detailedUser = await getUserWithRole(validUser);
+          setSession(currentSession);
           setUser(detailedUser);
           setLoading(false);
-          setInitialized(true);
+          setAuthInitialized(true);
+          console.log("Auth initialization complete");
         }
 
       } catch (error) {
         console.error("Auth initialization error:", error);
         if (mounted) {
-          clearAuthStorage();
+          clearSupabaseStorage();
           setUser(null);
           setSession(null);
           setLoading(false);
-          setInitialized(true);
+          setAuthInitialized(true);
         }
       }
     };
 
-    // Delay initialization slightly to avoid race conditions
-    const timer = setTimeout(() => {
-      initializeAuth();
-    }, 100);
-
-    return () => {
-      mounted = false;
-      clearTimeout(timer);
-    };
-  }, [getUserWithRole]);
-
-  // Listen for auth state changes
-  useEffect(() => {
+    // Listen for auth state changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, newSession) => {
-      console.log('Auth state change:', event);
+      console.log("Auth state change:", event);
       
+      if (!mounted) return;
+
       if (event === 'SIGNED_OUT' || !newSession) {
-        clearAuthStorage();
+        clearSupabaseStorage();
         setUser(null);
         setSession(null);
         setLoading(false);
@@ -177,13 +213,22 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
       if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
         setSession(newSession);
+        
+        // Get user details
         const detailedUser = await getUserWithRole(newSession.user);
         setUser(detailedUser);
         setLoading(false);
       }
     });
 
+    // Start initialization with a small delay
+    const timer = setTimeout(() => {
+      initializeAuth();
+    }, 100);
+
     return () => {
+      mounted = false;
+      clearTimeout(timer);
       subscription.unsubscribe();
     };
   }, [getUserWithRole]);
@@ -191,17 +236,28 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const signIn = async (email: string, password: string, rememberMe = true) => {
     setLoading(true);
     try {
+      console.log("Attempting sign in for:", email);
+      
+      // Clear any existing storage before login
+      clearSupabaseStorage();
+      
       const { data, error } = await supabase.auth.signInWithPassword({
         email,
         password,
       });
       
-      if (error) throw error;
+      if (error) {
+        console.error("Sign in error:", error);
+        throw error;
+      }
       
-      // Don't set user/session here - let onAuthStateChange handle it
+      console.log("Sign in successful, user:", data.user?.email);
+      
+      // Show success message
       showSuccess("Logged in successfully");
       
-      // IMPORTANT: Wait a moment for state to update, then redirect
+      // IMPORTANT: Don't set state here - let onAuthStateChange handle it
+      // Just wait a moment and redirect
       setTimeout(() => {
         window.location.href = '/';
       }, 100);
@@ -216,8 +272,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const signOut = async () => {
     setLoading(true);
     try {
+      console.log("Signing out...");
       await supabase.auth.signOut();
-      clearAuthStorage();
+      clearSupabaseStorage();
       setUser(null);
       setSession(null);
       showSuccess("Logged out successfully");
@@ -226,7 +283,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       window.location.href = '/login';
     } catch (error: any) {
       console.error('Sign out error:', error);
-      clearAuthStorage();
+      clearSupabaseStorage();
       setUser(null);
       setSession(null);
       window.location.href = '/login';
@@ -251,7 +308,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const value = {
     user,
     session,
-    loading: loading || !initialized,
+    loading: loading || !authInitialized,
     signIn,
     signOut,
     refreshUser,
