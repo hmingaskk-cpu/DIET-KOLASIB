@@ -3,8 +3,8 @@
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import DashboardCard from "@/components/DashboardCard";
-import { BookOpen, CalendarDays, CheckCircle, UserX, ClipboardCheck, GraduationCap, Mail, User as UserIcon } from "lucide-react"; // Added UserIcon
-import { isFuture, format, parseISO } from "date-fns";
+import { BookOpen, CalendarDays, CheckCircle, UserX, ClipboardCheck, GraduationCap, Mail, User as UserIcon } from "lucide-react";
+import { format } from "date-fns";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/context/AuthContext";
 import { Student } from "@/components/StudentTable";
@@ -15,10 +15,10 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { formatStatus, cn } from "@/lib/utils"; // Import cn
+import { formatStatus, cn } from "@/lib/utils";
 import QuickActionButton from "@/components/QuickActionButton";
-import ImageUpload from "@/components/ImageUpload"; // Import ImageUpload
-import { showError, showSuccess } from "@/utils/toast"; // Import showError, showSuccess
+import ImageUpload from "@/components/ImageUpload";
+import { showError, showSuccess } from "@/utils/toast";
 
 const StudentDashboard = () => {
   const { user, loading: authLoading, refreshUser } = useAuth();
@@ -41,11 +41,11 @@ const StudentDashboard = () => {
         const { data: studentData, error: studentError } = await supabase
           .from('students')
           .select('*')
-          .eq('user_id', user.id) // Link by user_id
+          .eq('user_id', user.id)
           .single();
 
         if (studentError) {
-          console.error("Error fetching student profile:", studentError.message); // Log specific error message
+          console.error("Error fetching student profile:", studentError.message);
           setError(`Failed to load student profile: ${studentError.message}. Please ensure your student details are added and linked.`);
           setLoading(false);
           return;
@@ -53,17 +53,22 @@ const StudentDashboard = () => {
         setStudentProfile(studentData as Student);
 
         if (studentData) {
-          // 2. Fetch enrolled courses (assuming course is a string match for now)
+          // 2. Fetch enrolled courses (using proper foreign key relationship if available)
+          // If course_id exists in studentData, use that instead of title matching
+          const courseFilter = studentData.course_id 
+            ? { id: studentData.course_id }
+            : { title: studentData.course };
+
           const { data: coursesData, error: coursesError } = await supabase
             .from('courses')
             .select('*')
-            .eq('title', studentData.course); // Match by course title
+            .match(courseFilter);
 
           if (coursesError) {
             console.error("Error fetching enrolled courses:", coursesError);
-            setError("Failed to load enrolled courses.");
+            // Don't set error for courses - just log and continue
           } else {
-            setEnrolledCourses(coursesData as Course[]);
+            setEnrolledCourses(coursesData as Course[] || []);
           }
 
           // 3. Fetch personal attendance records
@@ -72,29 +77,30 @@ const StudentDashboard = () => {
             .select('*')
             .eq('student_id', studentData.id)
             .order('date', { ascending: false })
-            .limit(10); // Show recent attendance
+            .limit(10);
 
           if (attendanceError) {
             console.error("Error fetching personal attendance:", attendanceError);
-            setError("Failed to load personal attendance.");
+            // Don't set error for attendance - just log and continue
           } else {
-            setPersonalAttendance(attendanceData as AttendanceRecord[]);
+            setPersonalAttendance(attendanceData as AttendanceRecord[] || []);
           }
         }
 
         // 4. Fetch upcoming events
+        const today = new Date().toISOString().split('T')[0];
         const { data: eventsData, error: eventsError } = await supabase
           .from('calendarEvents')
           .select('*')
+          .gte('date', today)
           .order('date', { ascending: true })
-          .gte('date', format(new Date(), 'yyyy-MM-dd')) // Only future events
           .limit(5);
 
         if (eventsError) {
           console.error("Error fetching upcoming events:", eventsError);
-          setError("Failed to load upcoming events.");
+          // Don't set error for events - just log and continue
         } else {
-          const fetchedEvents = eventsData.map(event => ({
+          const fetchedEvents = (eventsData || []).map(event => ({
             ...event,
             date: new Date(event.date),
           })) as CalendarEvent[];
@@ -113,36 +119,48 @@ const StudentDashboard = () => {
   }, [user, authLoading]);
 
   const handleUploadSuccess = async (imageUrl: string, publicId: string) => {
-    if (!user?.id) return; // Use user.id from AuthContext
+    if (!user?.id) return;
 
-    const { error: updateError } = await supabase
-      .from('profiles') // Update profiles table
-      .update({ avatar_url: imageUrl, cloudinary_public_id: publicId }) // Update public_id too
-      .eq('id', user.id); // Match by user.id
+    try {
+      const { error: updateError } = await supabase
+        .from('profiles')
+        .update({ 
+          avatar_url: imageUrl, 
+          cloudinary_public_id: publicId,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', user.id);
 
-    if (updateError) {
-      console.error("Error updating profile avatar URL in DB:", updateError);
-      showError("Failed to update avatar URL in database.");
-    } else {
+      if (updateError) throw updateError;
+      
       showSuccess("Profile picture updated successfully!");
-      refreshUser(); // Refresh AuthContext user to get updated avatar_url
+      refreshUser();
+    } catch (error: any) {
+      console.error("Error updating profile avatar URL:", error);
+      showError("Failed to update profile picture. Please try again.");
     }
   };
 
   const handleRemoveSuccess = async () => {
-    if (!user?.id) return; // Use user.id from AuthContext
+    if (!user?.id) return;
 
-    const { error: updateError } = await supabase
-      .from('profiles') // Update profiles table
-      .update({ avatar_url: null, cloudinary_public_id: null }) // Clear public_id too
-      .eq('id', user.id); // Match by user.id
+    try {
+      const { error: updateError } = await supabase
+        .from('profiles')
+        .update({ 
+          avatar_url: null, 
+          cloudinary_public_id: null,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', user.id);
 
-    if (updateError) {
-      console.error("Error removing profile avatar URL from DB:", updateError);
-      showError("Failed to remove avatar URL from database.");
-    } else {
+      if (updateError) throw updateError;
+      
       showSuccess("Profile picture removed successfully!");
-      refreshUser(); // Refresh AuthContext user to get updated avatar_url
+      refreshUser();
+    } catch (error: any) {
+      console.error("Error removing profile avatar URL:", error);
+      showError("Failed to remove profile picture. Please try again.");
     }
   };
 
@@ -199,30 +217,47 @@ const StudentDashboard = () => {
       </p>
 
       <div className="grid gap-6 lg:grid-cols-2 mt-8 px-4 sm:px-6">
+        {/* Profile Card */}
         <Card className="rounded-none sm:rounded-lg">
           <CardHeader className="px-4 sm:px-6">
             <CardTitle className="text-deep-blue">Your Profile</CardTitle>
           </CardHeader>
           <CardContent className="px-4 sm:px-6 flex flex-col items-center">
             <div className="relative w-32 h-32 rounded-full overflow-hidden border-2 border-deep-blue flex items-center justify-center bg-gray-100 mb-4">
-              {user.avatar_url ? ( // Use user.avatar_url from AuthContext
-                <img src={user.avatar_url} alt={`${studentProfile.name}'s avatar`} className="w-full h-full object-cover" crossOrigin="anonymous" />
+              {user.avatar_url ? (
+                <img 
+                  src={user.avatar_url} 
+                  alt={`${studentProfile.name}'s avatar`} 
+                  className="w-full h-full object-cover" 
+                  onError={(e) => {
+                    // Fallback to icon if image fails to load
+                    e.currentTarget.style.display = 'none';
+                    const parent = e.currentTarget.parentElement;
+                    if (parent) {
+                      const icon = document.createElement('div');
+                      icon.innerHTML = '<svg class="h-20 w-20 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>';
+                      parent.appendChild(icon);
+                    }
+                  }}
+                />
               ) : (
                 <UserIcon className="h-20 w-20 text-gray-400" />
               )}
             </div>
-            {user.id && ( // Only show ImageUpload if user_id is available
+            
+            {user.id && (
               <ImageUpload
-                currentImageUrl={user.avatar_url} // Use user.avatar_url from AuthContext
-                currentPublicId={user.cloudinary_public_id} // Pass public_id from AuthContext
+                currentImageUrl={user.avatar_url}
+                currentPublicId={user.cloudinary_public_id}
                 onUploadSuccess={handleUploadSuccess}
                 onRemoveSuccess={handleRemoveSuccess}
-                userId={user.id} // Pass the Supabase auth.users.id
+                userId={user.id}
                 label="Change Profile Picture"
                 className="w-full max-w-sm"
-                canEdit={true} // Student can always edit their own profile picture
+                canEdit={true}
               />
             )}
+            
             <p className="text-lg font-semibold mt-4">{studentProfile.name}</p>
             <p className="text-sm text-muted-foreground">{studentProfile.email}</p>
             <p className="text-sm text-muted-foreground">Roll No: {studentProfile.rollno}</p>
@@ -242,6 +277,7 @@ const StudentDashboard = () => {
           </CardContent>
         </Card>
 
+        {/* Enrolled Courses Card */}
         <Card className="rounded-none sm:rounded-lg">
           <CardHeader className="px-4 sm:px-6">
             <CardTitle className="text-deep-blue">Your Enrolled Courses</CardTitle>
@@ -250,7 +286,7 @@ const StudentDashboard = () => {
             {enrolledCourses.length === 0 ? (
               <p className="text-gray-600">No courses found for you.</p>
             ) : (
-              <div className="rounded-md border bg-white p-2">
+              <div className="rounded-md border bg-white p-2 max-h-[300px] overflow-y-auto">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -263,7 +299,7 @@ const StudentDashboard = () => {
                     {enrolledCourses.map(course => (
                       <TableRow key={course.id}>
                         <TableCell className="font-medium">{course.code}</TableCell>
-                        <TableCell>{course.title}</TableCell>
+                        <TableCell className="truncate max-w-[150px]">{course.title}</TableCell>
                         <TableCell>{course.instructor}</TableCell>
                       </TableRow>
                     ))}
@@ -274,6 +310,7 @@ const StudentDashboard = () => {
           </CardContent>
         </Card>
 
+        {/* Upcoming Events Card */}
         <Card className="rounded-none sm:rounded-lg">
           <CardHeader className="px-4 sm:px-6">
             <CardTitle className="text-deep-blue">Upcoming Events</CardTitle>
@@ -282,13 +319,16 @@ const StudentDashboard = () => {
             {upcomingEvents.length === 0 ? (
               <p className="text-gray-600">No upcoming events.</p>
             ) : (
-              <div className="space-y-3">
+              <div className="space-y-3 max-h-[300px] overflow-y-auto">
                 {upcomingEvents.map(event => (
-                  <div key={event.id} className="flex items-center space-x-3 p-2 border rounded-md bg-light-gray">
-                    <CalendarDays className="h-5 w-5 text-deep-blue" />
-                    <div>
-                      <p className="font-medium">{event.title}</p>
+                  <div key={event.id} className="flex items-start space-x-3 p-2 border rounded-md bg-light-gray hover:bg-gray-50 transition-colors">
+                    <CalendarDays className="h-5 w-5 text-deep-blue mt-1 flex-shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <p className="font-medium truncate">{event.title}</p>
                       <p className="text-sm text-muted-foreground">{format(event.date, "PPP")}</p>
+                      {event.description && (
+                        <p className="text-sm text-gray-600 mt-1 line-clamp-2">{event.description}</p>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -297,6 +337,7 @@ const StudentDashboard = () => {
           </CardContent>
         </Card>
 
+        {/* Attendance Summary Card */}
         <Card className="rounded-none sm:rounded-lg">
           <CardHeader className="px-4 sm:px-6">
             <CardTitle className="text-deep-blue">Your Attendance Summary</CardTitle>
@@ -330,17 +371,22 @@ const StudentDashboard = () => {
               />
             </div>
             <div className="mt-4 text-center">
-              <Link to="/attendance-reports" className="text-app-green hover:underline inline-flex items-center">
-                <ClipboardCheck className="mr-2 h-4 w-4" /> View Full Attendance Report
+              <Link 
+                to="/attendance-reports" 
+                className="text-app-green hover:underline inline-flex items-center hover:text-app-green-dark transition-colors"
+              >
+                <ClipboardCheck className="mr-2 h-4 w-4" /> 
+                View Full Attendance Report
               </Link>
             </div>
           </CardContent>
         </Card>
       </div>
 
+      {/* Quick Access Section */}
       <div className="mt-8 px-4 sm:px-6">
         <h2 className="text-2xl font-semibold mb-4 text-deep-blue">Quick Access</h2>
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           <QuickActionButton
             to="/profile"
             icon={UserIcon}
