@@ -34,6 +34,7 @@ import AlumniDetail from "./pages/AlumniDetail";
 import { AuthProvider } from "./context/AuthContext";
 import ProtectedRoute from "./components/ProtectedRoute";
 import { useAuth } from "./context/AuthContext";
+import { clearAllAuthData, isTokenStale } from "./context/AuthContext";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -45,25 +46,9 @@ const queryClient = new QueryClient({
   },
 });
 
-// Service Worker and Cache Management
+// Service Worker Management
 const initializeServiceWorker = () => {
   if ('serviceWorker' in navigator) {
-    // Clear service worker cache on logout
-    window.addEventListener('logout', async () => {
-      try {
-        const reg = await navigator.serviceWorker.getRegistration();
-        if (reg) {
-          await reg.unregister();
-        }
-        // Clear all caches
-        const cacheNames = await caches.keys();
-        await Promise.all(cacheNames.map(cacheName => caches.delete(cacheName)));
-        console.log('Service worker and caches cleared on logout');
-      } catch (error) {
-        console.error('Failed to clear service worker:', error);
-      }
-    });
-
     // Force service worker update on app start
     navigator.serviceWorker.getRegistrations().then(registrations => {
       registrations.forEach(registration => {
@@ -73,73 +58,34 @@ const initializeServiceWorker = () => {
   }
 };
 
-// Check for stale auth state on app load
-const checkAndClearStaleAuthState = () => {
-  const lastAuthTime = localStorage.getItem('last_auth_time');
-  const authToken = localStorage.getItem('auth_token');
-  const now = Date.now();
-  
-  // If we have a token but no timestamp, or token is older than 24 hours, clear everything
-  if (authToken) {
-    if (!lastAuthTime) {
-      console.log('Clearing auth: No timestamp found');
-      clearAllAuthData();
-      return true;
-    }
-    
-    const tokenAge = now - parseInt(lastAuthTime, 10);
-    const MAX_TOKEN_AGE = 24 * 60 * 60 * 1000; // 24 hours
-    
-    if (tokenAge > MAX_TOKEN_AGE) {
-      console.log('Clearing auth: Token expired (age:', Math.floor(tokenAge / 1000 / 60), 'minutes)');
-      clearAllAuthData();
-      return true;
-    }
-  }
-  
-  return false;
-};
-
-const clearAllAuthData = () => {
-  // Clear localStorage
-  localStorage.removeItem('auth_token');
-  localStorage.removeItem('last_auth_time');
-  localStorage.removeItem('user_role');
-  localStorage.removeItem('user_email');
-  
-  // Clear sessionStorage
-  sessionStorage.clear();
-  
-  // Clear cookies
-  document.cookie.split(";").forEach(function(c) {
-    document.cookie = c.replace(/^ +/, "").replace(/=.*/, "=;expires=" + new Date().toUTCString() + ";path=/");
-  });
-  
-  // Clear service worker caches if available
-  if ('caches' in window) {
-    caches.keys().then(cacheNames => {
-      cacheNames.forEach(cacheName => {
-        caches.delete(cacheName);
-      });
-    });
-  }
-};
-
-// Component to handle auth initialization
+// Component to handle auth initialization and state management
 const AuthStateInitializer = () => {
-  const { user, logout, loading } = useAuth();
+  const { user, loading } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const [appReady, setAppReady] = useState(false);
 
   useEffect(() => {
     // Initialize service worker
     initializeServiceWorker();
     
     // Check for stale auth on mount
-    const shouldClear = checkAndClearStaleAuthState();
-    if (shouldClear && location.pathname !== '/login') {
-      navigate('/login', { replace: true });
+    const staleAuthDetected = isTokenStale();
+    
+    // Only redirect if we're not already on login page
+    if (staleAuthDetected && location.pathname !== '/login' && location.pathname !== '/forgot-password') {
+      console.log('Stale auth detected, clearing and redirecting to login');
+      clearAllAuthData();
+      navigate('/login', { 
+        replace: true,
+        state: { from: location.pathname, sessionExpired: true }
+      });
     }
+    
+    // Mark app as ready after checks
+    setTimeout(() => {
+      setAppReady(true);
+    }, 100);
     
     // Set up beforeunload handler to save auth state
     const handleBeforeUnload = () => {
@@ -162,7 +108,12 @@ const AuthStateInitializer = () => {
     }
   }, [user]);
 
-  return null; // This component doesn't render anything
+  // Prevent rendering until auth checks are done
+  if (!appReady) {
+    return null;
+  }
+
+  return null;
 };
 
 const AppRoutes = () => {
@@ -173,7 +124,7 @@ const AppRoutes = () => {
     // Set a timeout to prevent infinite loading
     const timer = setTimeout(() => {
       setAuthInitialized(true);
-    }, 3000); // 3 seconds max for auth initialization
+    }, 5000); // 5 seconds max for auth initialization
 
     return () => clearTimeout(timer);
   }, []);
@@ -189,7 +140,7 @@ const AppRoutes = () => {
             clearAllAuthData();
             window.location.href = '/login';
           }}
-          className="mt-4 px-4 py-2 text-sm text-red-600 hover:text-red-800"
+          className="mt-4 px-4 py-2 text-sm text-red-600 hover:text-red-800 border border-red-300 rounded-md hover:bg-red-50 transition-colors"
         >
           Reset App State
         </button>
@@ -197,10 +148,9 @@ const AppRoutes = () => {
     );
   }
 
-  // FIX: This is now a safe component that won't crash if user is null
   const DashboardSelector = () => {
     if (!user) {
-      // Redirect to login if no user
+      // If no user but we're here, something is wrong - redirect to login
       window.location.href = '/login';
       return null;
     }
@@ -217,7 +167,6 @@ const AppRoutes = () => {
       case "student":
         return <StudentDashboard />;
       default:
-        // FIX: Default to Student or a safe page, NEVER Admin
         console.warn("Unknown role detected, defaulting to Student Dashboard");
         return <StudentDashboard />;
     }
@@ -233,7 +182,6 @@ const AppRoutes = () => {
         <Route path="/unauthorized" element={<Unauthorized />} />
         
         <Route element={<DashboardLayout />}>
-          {/* FIX: DashboardSelector is rendered safely inside the protection */}
           <Route path="/" element={
             <ProtectedRoute requiredRoles={["admin", "faculty", "staff", "student"]}>
               <DashboardSelector />
