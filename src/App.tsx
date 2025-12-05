@@ -31,9 +31,8 @@ import FacultyDashboard from "./pages/FacultyDashboard";
 import StaffDashboard from "./pages/StaffDashboard";
 import AlumniPage from "./pages/Alumni";
 import AlumniDetail from "./pages/AlumniDetail";
-import { AuthProvider } from "./context/AuthContext";
+import { AuthProvider, useAuth } from "./context/AuthContext"; // ✅ Fixed import
 import ProtectedRoute from "./components/ProtectedRoute";
-import { useAuth } from "./context/AuthContext";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -57,7 +56,7 @@ const registerServiceWorker = async () => {
       if (!isAuthPage) {
         const registration = await navigator.serviceWorker.register('/sw.js', {
           scope: '/',
-          updateViaCache: 'none', // Always check for updates
+          updateViaCache: 'none',
         });
         
         console.log('Service Worker registered:', registration);
@@ -69,7 +68,6 @@ const registerServiceWorker = async () => {
             newWorker.addEventListener('statechange', () => {
               if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
                 console.log('New service worker available. Refresh to update.');
-                // You could show an update notification here
               }
             });
           }
@@ -83,22 +81,6 @@ const registerServiceWorker = async () => {
   }
 };
 
-// Clean up service workers on auth pages
-const cleanupServiceWorkers = async () => {
-  if ('serviceWorker' in navigator) {
-    const registrations = await navigator.serviceWorker.getRegistrations();
-    for (const registration of registrations) {
-      await registration.unregister();
-    }
-    
-    // Clear caches
-    if ('caches' in window) {
-      const cacheNames = await caches.keys();
-      await Promise.all(cacheNames.map(cacheName => caches.delete(cacheName)));
-    }
-  }
-};
-
 const AppRoutes = () => {
   const { user, loading, forceClearStaleSession } = useAuth();
   const navigate = useNavigate();
@@ -108,13 +90,6 @@ const AppRoutes = () => {
   // Register service worker when authenticated
   useEffect(() => {
     const initializeServiceWorker = async () => {
-      // Clean up on auth pages
-      if (window.location.pathname === '/login' || 
-          window.location.pathname === '/forgot-password') {
-        await cleanupServiceWorkers();
-        return;
-      }
-      
       // Register on authenticated pages
       if (user && !loading) {
         await registerServiceWorker();
@@ -162,7 +137,6 @@ const AppRoutes = () => {
             onClick={() => {
               localStorage.clear();
               sessionStorage.clear();
-              cleanupServiceWorkers();
               window.location.href = '/login';
             }}
             className="mt-4 px-4 py-2 text-sm bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors"
@@ -238,7 +212,6 @@ const App = () => {
       if ('serviceWorker' in navigator) {
         const registrations = await navigator.serviceWorker.getRegistrations();
         for (const registration of registrations) {
-          // Keep only the latest service worker
           registration.update();
         }
       }
