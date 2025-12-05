@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { User, Session } from '@supabase/supabase-js';
 import { showSuccess, showError } from '@/utils/toast';
@@ -28,15 +28,66 @@ interface AuthContextType {
   signIn: (email: string, password: string, rememberMe?: boolean) => Promise<void>;
   signOut: () => Promise<void>;
   refreshUser: () => Promise<void>;
+  forceClearStaleSession: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+// Helper function to clear all auth data
+const clearAllAuthData = () => {
+  console.log("Clearing all auth data...");
+  
+  // Clear localStorage
+  Object.keys(localStorage).forEach(key => {
+    if (key.includes('supabase') || key.includes('sb-') || key.includes('auth') || key.includes('last_auth')) {
+      localStorage.removeItem(key);
+    }
+  });
+  
+  // Clear sessionStorage
+  sessionStorage.clear();
+  
+  // Clear cookies
+  document.cookie.split(";").forEach(function(c) {
+    const cookieName = c.split("=")[0].trim();
+    if (cookieName.includes('supabase') || cookieName.includes('sb-') || cookieName.includes('auth')) {
+      document.cookie = cookieName + "=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/";
+    }
+  });
+};
 
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [user, setUser] = useState<UserWithRole | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
   const [initialized, setInitialized] = useState(false);
+  const initializationAttempted = useRef(false);
+
+  // Function to force clear stale session
+  const forceClearStaleSession = async () => {
+    console.log("Force clearing stale session...");
+    clearAllAuthData();
+    setUser(null);
+    setSession(null);
+    setLoading(false);
+    setInitialized(true);
+    
+    // If we're not already on login page, redirect
+    if (window.location.pathname !== '/login' && window.location.pathname !== '/forgot-password') {
+      window.location.href = '/login';
+    }
+  };
+
+  // Check if session is stale (older than 24 hours)
+  const isSessionStale = (session: Session): boolean => {
+    if (!session.expires_at) return true;
+    
+    const expiresAt = new Date(session.expires_at * 1000); // Convert to milliseconds
+    const now = new Date();
+    const hoursSinceExpiry = (now.getTime() - expiresAt.getTime()) / (1000 * 60 * 60);
+    
+    return hoursSinceExpiry > 24; // Consider stale if expired more than 24 hours ago
+  };
 
   // Get user with role details
   const getUserWithRole = useCallback(async (baseUser: User): Promise<UserWithRole | null> => {
@@ -80,25 +131,23 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }
   }, []);
 
-  // Initialize auth - SIMPLE VERSION
+  // Initialize auth with automatic stale session detection
   useEffect(() => {
+    if (initializationAttempted.current) return;
+    initializationAttempted.current = true;
+    
     let mounted = true;
 
     const initializeAuth = async () => {
       try {
-        console.log("Initializing auth...");
+        console.log("Initializing auth with stale session check...");
         
         // Get current session
         const { data: { session: currentSession }, error: sessionError } = await supabase.auth.getSession();
 
         if (sessionError) {
           console.error("Session error:", sessionError);
-          if (mounted) {
-            setUser(null);
-            setSession(null);
-            setLoading(false);
-            setInitialized(true);
-          }
+          await forceClearStaleSession();
           return;
         }
 
@@ -115,21 +164,23 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           return;
         }
 
+        // Check if session is stale
+        if (isSessionStale(currentSession)) {
+          console.log("Session is stale, clearing...");
+          await forceClearStaleSession();
+          return;
+        }
+
         // Validate user
         const { data: { user: currentUser }, error: userError } = await supabase.auth.getUser();
 
         if (userError || !currentUser) {
           console.error("User validation error:", userError);
-          if (mounted) {
-            setUser(null);
-            setSession(null);
-            setLoading(false);
-            setInitialized(true);
-          }
+          await forceClearStaleSession();
           return;
         }
 
-        // Get user details
+        // Session is valid, get user details
         const detailedUser = await getUserWithRole(currentUser);
         
         if (mounted) {
@@ -138,28 +189,46 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           setLoading(false);
           setInitialized(true);
           console.log("Auth initialized with user:", detailedUser?.email);
+          
+          // Store last successful auth time
+          localStorage.setItem('last_valid_auth', Date.now().toString());
         }
 
       } catch (error) {
         console.error("Auth initialization error:", error);
         if (mounted) {
-          setUser(null);
-          setSession(null);
-          setLoading(false);
-          setInitialized(true);
+          await forceClearStaleSession();
         }
       }
     };
 
-    initializeAuth();
+    // Add a small delay to ensure Supabase client is ready
+    const timer = setTimeout(() => {
+      initializeAuth();
+    }, 100);
 
-    // Listen for auth state changes
+    // Timeout safety - if auth takes too long, clear and redirect
+    const safetyTimer = setTimeout(() => {
+      if (mounted && loading) {
+        console.warn("Auth initialization timeout, forcing clear");
+        forceClearStaleSession();
+      }
+    }, 5000);
+
+    return () => {
+      mounted = false;
+      clearTimeout(timer);
+      clearTimeout(safetyTimer);
+    };
+  }, [getUserWithRole, loading]);
+
+  // Listen for auth state changes
+  useEffect(() => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, newSession) => {
       console.log("Auth state change:", event);
       
-      if (!mounted) return;
-
       if (event === 'SIGNED_OUT') {
+        clearAllAuthData();
         setUser(null);
         setSession(null);
         setLoading(false);
@@ -171,15 +240,19 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         const detailedUser = await getUserWithRole(newSession.user);
         setUser(detailedUser);
         setLoading(false);
+        
+        // Store last successful auth time
+        localStorage.setItem('last_valid_auth', Date.now().toString());
       }
 
       if (event === 'TOKEN_REFRESHED' && newSession) {
         setSession(newSession);
+        // Update last valid auth time on token refresh
+        localStorage.setItem('last_valid_auth', Date.now().toString());
       }
     });
 
     return () => {
-      mounted = false;
       subscription.unsubscribe();
     };
   }, [getUserWithRole]);
@@ -202,8 +275,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       console.log("Sign in successful");
       showSuccess("Logged in successfully");
       
-      // Auth state will be updated via onAuthStateChange
-      // Redirect will happen in ProtectedRoute or useEffect
+      // Store last successful auth time
+      localStorage.setItem('last_valid_auth', Date.now().toString());
       
     } catch (error: any) {
       console.error('Sign in error:', error);
@@ -218,12 +291,14 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setLoading(true);
     try {
       await supabase.auth.signOut();
+      clearAllAuthData();
       setUser(null);
       setSession(null);
       showSuccess("Logged out successfully");
       window.location.href = '/login';
     } catch (error: any) {
       console.error('Sign out error:', error);
+      clearAllAuthData();
       setUser(null);
       setSession(null);
       window.location.href = '/login';
@@ -252,6 +327,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     signIn,
     signOut,
     refreshUser,
+    forceClearStaleSession,
   };
 
   return (
