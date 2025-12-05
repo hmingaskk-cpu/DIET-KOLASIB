@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, useNavigate } from "react-router-dom";
 import { ThemeProvider } from "@/components/theme-provider";
 import AdminDashboard from "./pages/AdminDashboard";
 import NotFound from "./pages/NotFound";
@@ -45,14 +45,53 @@ const queryClient = new QueryClient({
   },
 });
 
+// Clear any service workers that might be interfering
+const cleanupServiceWorkers = () => {
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.getRegistrations().then(registrations => {
+      registrations.forEach(registration => {
+        registration.unregister();
+        console.log('Service worker unregistered');
+      });
+    });
+    
+    // Clear caches
+    if ('caches' in window) {
+      caches.keys().then(cacheNames => {
+        cacheNames.forEach(cacheName => {
+          caches.delete(cacheName);
+        });
+      });
+    }
+  }
+};
+
 const AppRoutes = () => {
   const { user, loading } = useAuth();
   const [showResetButton, setShowResetButton] = useState(false);
+  const navigate = useNavigate();
 
+  // Cleanup on first load
+  useEffect(() => {
+    cleanupServiceWorkers();
+  }, []);
+
+  // Auto-redirect if not logged in and on protected page
+  useEffect(() => {
+    if (!loading && !user && window.location.pathname !== '/login' && 
+        window.location.pathname !== '/forgot-password' && 
+        window.location.pathname !== '/update-password') {
+      navigate('/login');
+    }
+  }, [user, loading, navigate]);
+
+  // Show reset button after 3 seconds
   useEffect(() => {
     const timer = setTimeout(() => {
-      setShowResetButton(true);
-    }, 2000);
+      if (loading) {
+        setShowResetButton(true);
+      }
+    }, 3000);
     
     return () => clearTimeout(timer);
   }, [loading]);
@@ -67,9 +106,9 @@ const AppRoutes = () => {
         {showResetButton && (
           <button
             onClick={() => {
-              // Clear everything
               localStorage.clear();
               sessionStorage.clear();
+              cleanupServiceWorkers();
               window.location.href = '/login';
             }}
             className="mt-4 px-4 py-2 text-sm bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors"
@@ -139,6 +178,11 @@ const AppRoutes = () => {
 };
 
 const App = () => {
+  // Run cleanup on app start
+  useEffect(() => {
+    cleanupServiceWorkers();
+  }, []);
+
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider defaultTheme="system" storageKey="vite-ui-theme">
